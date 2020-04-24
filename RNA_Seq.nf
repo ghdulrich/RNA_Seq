@@ -3,7 +3,7 @@
 // Rewritten by Adam Gower, based on scripts by Yusuke Koga
 
 // Global variables for required parameters
-inputFile = file(params.infile)
+inputFile = file(params.infile_host)
 inputFileHeader = params.infile_header
 
 logParams(params, "nextflow_parameters.txt")
@@ -32,7 +32,7 @@ process runSTAR1pass {
   tag "Running STAR first pass on ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/Processing/Libraries/${libraryID}/${rgID}/STAR_1Pass"
 
-  module params.modules.star
+  //module params.modules.star
 
   input:
   set indivID, sampleID, libraryID, rgID, platform_unit, platform,
@@ -47,8 +47,7 @@ process runSTAR1pass {
   star_outFileNamePrefix = "${sampleID}.1pass."
 
   """
-  module list
-
+  export NSLOTS=8  
   STAR \
     --genomeDir ${params.STAR.genomeDir} \
     --readFilesIn ${R1} \
@@ -66,11 +65,10 @@ process runSTARgenomeGenerate {
   tag "Generating STAR genome reference with splice junctions"
   publishDir "${params.output_dir}/Output/STAR"
 
-  module params.modules.star
-
+  
   input:
   // Method toSortedList() used to ensure task will be cached, not resubmitted
-  val sjdb_files from runSTAR1pass_to_runSTARgenomeGenerate.toSortedList()
+  file sjdb_files from runSTAR1pass_to_runSTARgenomeGenerate.toSortedList()
 
   output:
   file("${genomeDir}/*") into runSTARgenomeGenerateOutput
@@ -80,7 +78,7 @@ process runSTARgenomeGenerate {
   genomeDir="genomeGenerate"
 
   """
-  module list
+  export NSLOTS=8
   mkdir ${genomeDir}/
   STAR \
     --runMode genomeGenerate \
@@ -98,9 +96,9 @@ process runSTAR2pass {
   tag "Running STAR second pass on ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}"
 
-  module params.modules.star
-  module params.modules.htslib
-  module params.modules.samtools
+  //module params.modules.star
+  //module params.modules.samtools
+  //module params.modules.htslib
 
   input:
   set indivID, sampleID, libraryID, rgID, platform_unit, platform,
@@ -118,7 +116,6 @@ process runSTAR2pass {
       runSTAR2pass_to_RSeQC_geneBody_coverage,
       runSTAR2pass_to_RSeQC_junction_annotation,
       runSTAR2pass_to_RSeQC_junction_saturation,
-      runSTAR2pass_to_RSeQC_tin,
       runSTAR2pass_to_RSeQC_inner_distance,
       runSTAR2pass_to_RSeQC_clipping_profile,
       runSTAR2pass_to_RSeQC_infer_experiment,
@@ -133,6 +130,9 @@ process runSTAR2pass {
   // Output to RSEM
   set indivID, sampleID, file(star_transcriptome_bam) \
     into runSTAR2pass_to_runRSEM
+  // tin.py needs the bia file also
+  set indivID, sampleID, file(outfile_bam), file(outfile_bai), file(outfile_bambai) \
+    into runSTAR2pass_to_RSeQC_tin
   // Files to be stored, but not passed on to other processes
   set file(outfile_bai), file(outfile_bambai) \
     into runSTAR2passOutput
@@ -150,12 +150,12 @@ process runSTAR2pass {
   outfile_bambai = "${sampleID}.bam.bai"
 
   """
-  module list
-
+  export NSLOTS=8
   # Extract the 'mem_total' qsub parameter, which should be an integer followed
   # by the letter 'G' (e.g., '30G') or an empty string if not specified
-  MEM_TOTAL="\$(qstat -j \$JOB_ID | grep -oP "mem_total=[^,]+" | cut -f2 -d'=')"
-
+  # DAU We have no access to a jobID .. perhaps should revisit this
+  # MEM_TOTAL="\$(qstat -j \$JOB_ID | grep -oP "mem_total=[^,]+" | cut -f2 -d'=')"
+  export MEM_TOTAL=30G
   # Create @RG (read group) header line for STAR output
   # Note: --outSAMattrRGline flag replaces call to Picard AddOrReplaceReadGroups
   # Read group fields are discussed at:
@@ -194,11 +194,11 @@ process runRSEM {
   tag "Running RSEM on ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSEM"
 
-  module params.modules.R
-  module params.modules.rsem
+  //module params.modules.R
+  //module params.modules.rsem
 
   input:
-  set indivID, sampleID, star_transcriptome_bam \
+  set indivID, sampleID, file(star_transcriptome_bam) \
     from runSTAR2pass_to_runRSEM
 
   output:
@@ -212,12 +212,14 @@ process runRSEM {
   outfile_plot = "${sampleID}_RSEM.pdf"
 
   """
-  module list
-
+  
   # Extract the 'mem_total' qsub parameter, which should be an integer followed
   # by the letter 'G' (e.g., '30G') or an empty string if not specified
-  MEM_TOTAL="\$(qstat -j \$JOB_ID | grep -oP "mem_total=[^,]+" | cut -f2 -d'=')"
 
+  # we have not JOB_ID or qsub ... just use 30 for now, can parameterize later
+  #MEM_TOTAL="\$(qstat -j \$JOB_ID | grep -oP "mem_total=[^,]+" | cut -f2 -d'=')"
+  export NSLOTS=8
+  export MEM_TOTAL=30G
   # Compute expression values using RSEM
   rsem-calculate-expression \
     --calc-ci --estimate-rspd --no-bam-output --bam \
@@ -239,7 +241,7 @@ process runFastQC {
   tag "Running FastQC for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/Processing/Libraries/${libraryID}/${rgID}/FastQC"
 
-  module params.modules.fastqc
+  //module params.modules.fastqc
 
   input:
   set indivID, sampleID, libraryID, rgID, platform_unit, platform,
@@ -249,10 +251,10 @@ process runFastQC {
   output:
   file("*.zip") into runFastQC_to_runMultiQCFastq
 
+ print(readInput_to_runFastQC)
   script:
   """
-  module list
-
+  
   # Run FastQC
   fastqc -t 1 -o . \
     ${R1} \
@@ -270,28 +272,26 @@ process runFastQC {
 process runRSeQC_bam_stat {
   tag "Running RSeQC bam_stat for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
-  module "${params.modules.python3}:${params.modules.rseqc}"
+  //module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_bam_stat
+  set indivID, sampleID, file(bam) from runSTAR2pass_to_RSeQC_bam_stat
   output:
   file("${sampleID}.bam_stat.txt") into runRSeQC_bam_stat_to_runMultiQCSample
   script:
   """
-  module list
   bam_stat.py -i ${bam} > ${sampleID}.bam_stat.txt
   """
 }
 process runRSeQC_clipping_profile {
   tag "Running RSeQC clipping_profile for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
-  module "${params.modules.python3}:${params.modules.rseqc}"
+  //module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_clipping_profile
+  set indivID, sampleID, file(bam) from runSTAR2pass_to_RSeQC_clipping_profile
   output:
   file("${sampleID}.*") into runRSeQC_clipping_profile_Output
   script:
   """
-  module list
   clipping_profile.py -i ${bam} -o ${sampleID} \
     -s \$([[ "${params.paired_end}" == "true" ]] && echo "PE" || echo "SE")
   """
@@ -299,45 +299,42 @@ process runRSeQC_clipping_profile {
 process runRSeQC_deletion_profile {
   tag "Running RSeQC deletion_profile for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
-  module "${params.modules.python3}:${params.modules.rseqc}"
+  //module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_deletion_profile
+  set indivID, sampleID, file(bam) from runSTAR2pass_to_RSeQC_deletion_profile
   output:
   file("${sampleID}.*") into runRSeQC_deletion_profile_Output
   script:
   """
-  module list
   deletion_profile.py -i ${bam} -l ${params.read_length} -o ${sampleID}
   """
 }
 process runRSeQC_geneBody_coverage {
   tag "Running RSeQC geneBody_coverage for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
-  module "${params.modules.python3}:${params.modules.rseqc}"
+  //module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_geneBody_coverage
+  set indivID, sampleID, file(bam) from runSTAR2pass_to_RSeQC_geneBody_coverage
   output:
   file("${sampleID}.geneBodyCoverage.txt") \
     into runRSeQC_geneBody_coverage_to_runMultiQCSample
   file("${sampleID}.*") into runRSeQC_geneBody_coverage_Output
   script:
   """
-  module list
   geneBody_coverage.py -i ${bam} -r ${params.gene_bed} -o ${sampleID}
   """
 }
 process runRSeQC_infer_experiment {
   tag "Running RSeQC infer_experiment for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
-  module "${params.modules.python3}:${params.modules.rseqc}"
+  //module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_infer_experiment
+  set indivID, sampleID, file(bam) from runSTAR2pass_to_RSeQC_infer_experiment
   output:
   file("${sampleID}.infer_experiment.txt") \
     into runRSeQC_infer_experiment_to_runMultiQCSample
   script:
   """
-  module list
   infer_experiment.py -i ${bam} -r ${params.gene_bed} > \
     ${sampleID}.infer_experiment.txt
   """
@@ -345,30 +342,28 @@ process runRSeQC_infer_experiment {
 process runRSeQC_inner_distance {
   tag "Running RSeQC inner_distance for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
-  module "${params.modules.python3}:${params.modules.rseqc}"
+  //module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_inner_distance
+  set indivID, sampleID, file(bam) from runSTAR2pass_to_RSeQC_inner_distance
   output:
   file("${sampleID}.inner_distance_freq.txt") \
     into runRSeQC_inner_distance_to_runMultiQCSample
   file("${sampleID}.*") into runRSeQC_inner_distance_Output
   script:
   """
-  module list
   inner_distance.py -i ${bam} -r ${params.gene_bed} -o ${sampleID}
   """
 }
 process runRSeQC_insertion_profile {
   tag "Running RSeQC insertion_profile for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
-  module "${params.modules.python3}:${params.modules.rseqc}"
+  //module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_insertion_profile
+  set indivID, sampleID, file(bam) from runSTAR2pass_to_RSeQC_insertion_profile
   output:
   file("${sampleID}.*") into runRSeQC_insertion_profile_Output
   script:
   """
-  module list
   insertion_profile.py -i ${bam} -o ${sampleID} \
     -s \$([[ "${params.paired_end}" == "true" ]] && echo "PE" || echo "SE")
   """
@@ -376,16 +371,15 @@ process runRSeQC_insertion_profile {
 process runRSeQC_junction_annotation {
   tag "Running RSeQC junction_annotation for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
-  module "${params.modules.python3}:${params.modules.rseqc}"
+  //module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_junction_annotation
+  set indivID, sampleID, file(bam) from runSTAR2pass_to_RSeQC_junction_annotation
   output:
   file("${sampleID}.junction_annotation.txt") \
     into runRSeQC_junction_annotation_to_runMultiQCSample
   file("${sampleID}.*") into runRSeQC_junction_annotation_Output
   script:
   """
-  module list
   junction_annotation.py -i ${bam} -r ${params.gene_bed} -o ${sampleID} 2> \
     ${sampleID}.junction_annotation.txt
   """
@@ -393,31 +387,29 @@ process runRSeQC_junction_annotation {
 process runRSeQC_junction_saturation {
   tag "Running RSeQC junction_saturation for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
-  module "${params.modules.python3}:${params.modules.rseqc}"
+  //module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_junction_saturation
+  set indivID, sampleID, file(bam) from runSTAR2pass_to_RSeQC_junction_saturation
   output:
   file("${sampleID}.junctionSaturation_plot.r") \
     into runRSeQC_junction_saturation_to_runMultiQCSample
   file("${sampleID}.*") into runRSeQC_junction_saturation_Output
   script:
   """
-  module list
   junction_saturation.py -i ${bam} -r ${params.gene_bed} -o ${sampleID}
   """
 }
 process runRSeQC_read_distribution {
   tag "Running RSeQC read_distribution for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
-  module "${params.modules.python3}:${params.modules.rseqc}"
+  //module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_read_distribution
+  set indivID, sampleID, file(bam) from runSTAR2pass_to_RSeQC_read_distribution
   output:
   file("${sampleID}.read_distribution.txt") \
     into runRSeQC_read_distribution_to_runMultiQCSample
   script:
   """
-  module list
   read_distribution.py -i ${bam} -r ${params.gene_bed} > \
     ${sampleID}.read_distribution.txt
   """
@@ -425,74 +417,73 @@ process runRSeQC_read_distribution {
 process runRSeQC_read_duplication {
   tag "Running RSeQC read_duplication for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
-  module "${params.modules.python3}:${params.modules.rseqc}"
+  //module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_read_duplication
+  set indivID, sampleID, file(bam) from runSTAR2pass_to_RSeQC_read_duplication
   output:
   file("${sampleID}.pos.DupRate.xls") \
     into runRSeQC_read_duplication_to_runMultiQCSample
   file("${sampleID}.*") into runRSeQC_read_duplication_Output
   script:
   """
-  module list
   read_duplication.py -i ${bam} -o ${sampleID}
   """
 }
 process runRSeQC_read_GC {
   tag "Running RSeQC read_GC for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
-  module "${params.modules.python3}:${params.modules.rseqc}"
+  //module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_QC
+  set indivID, sampleID, file(bam) from runSTAR2pass_to_RSeQC_QC
   output:
   file("${sampleID}.GC.xls") into runRSeQC_read_GC_to_runMultiQCSample
   file("${sampleID}.*") into runRSeQC_read_GC_Output
   script:
   """
-  module list
   read_GC.py -i ${bam} -o ${sampleID}
   """
 }
 process runRSeQC_read_NVC {
   tag "Running RSeQC read_NVC for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
-  module "${params.modules.python3}:${params.modules.rseqc}"
+  //module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_read_NVC
+  set indivID, sampleID, file(bam) from runSTAR2pass_to_RSeQC_read_NVC
   output:
   file("${sampleID}.*") into runRSeQC_read_NVC_Output
   script:
   """
-  module list
   read_NVC.py -i ${bam} -o ${sampleID}
   """
 }
 process runRSeQC_read_quality {
   tag "Running RSeQC read_quality for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
-  module "${params.modules.python3}:${params.modules.rseqc}"
+  //module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_read_quality
+  set indivID, sampleID, file(bam) from runSTAR2pass_to_RSeQC_read_quality
   output:
   file("${sampleID}.*") into runRSeQC_read_quality_Output
   script:
   """
-  module list
   read_quality.py -i ${bam} -o ${sampleID}
   """
 }
 process runRSeQC_tin {
   tag "Running RSeQC tin for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
-  module "${params.modules.python3}:${params.modules.rseqc}"
+  //module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_tin
+  // need to use these as inputs because tin.py needs the.bai file in the same 
+  // dir. Nexflow will create links in the container's dir if these are here, otherwise 
+  // tin.py cant find them
+  set indivID, sampleID, file(bam), file(bai), file(bambai) from runSTAR2pass_to_RSeQC_tin
+  //set indivID, sampleID, file(bam) from runSTAR2pass_to_RSeQC_tin
   output:
   file("${sampleID}.summary.txt") into rseqc_tin_to_createSE
   file("${file(bam).baseName}.*") into rseqc_tin_Output
   script:
   """
-  module list
   tin.py -i ${bam} -r ${params.gene_bed} > ${sampleID}.summary.txt
   """
 }
@@ -501,12 +492,12 @@ process runMultiQCFastq {
   tag "Generating FASTQ-level summary and QC plots"
   publishDir "${params.output_dir}/Output/QC/Fastq"
 
-  module params.modules.python2
-  module params.modules.multiqc
+  //module params.modules.python2
+  //module params.modules.multiqc
 
   input:
   // Method toSortedList() used to ensure task will be cached, not resubmitted
-  val fastqc_files from runFastQC_to_runMultiQCFastq.flatten().toSortedList()
+  file fastqc_files from runFastQC_to_runMultiQCFastq.flatten().toSortedList()
 
   output:
   set file("fastq_multiqc.html"), file("fastq_multiqc_data/*") \
@@ -516,12 +507,11 @@ process runMultiQCFastq {
 
   script:
   """
-  module list
-  # Create temporary MultiQC input file
-  multiqc_input_tempfile=\$(mktemp)
-  echo -e "${fastqc_files.join('\n')}" > \$multiqc_input_tempfile
+  # needed for multiqc
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
   # Run MultiQC
-  multiqc -n fastq_multiqc --file-list \$multiqc_input_tempfile
+  multiqc -n fastq_multiqc ${fastqc_files}
   """
 }
 
@@ -529,30 +519,30 @@ process runMultiQCSample {
   tag "Generating sample-level summary and QC plots"
   publishDir "${params.output_dir}/Output/QC/Sample"
 
-  module params.modules.python2
-  module params.modules.multiqc
+  //module params.modules.python2
+  //module params.modules.multiqc
 
   input:
   // Method toSortedList() used to ensure task will be cached, not resubmitted
-  val rseqc_bam_stat_files \
+  file rseqc_bam_stat_files \
     from runRSeQC_bam_stat_to_runMultiQCSample.toSortedList()
-  val rseqc_geneBody_coverage_files \
+  file rseqc_geneBody_coverage_files \
     from runRSeQC_geneBody_coverage_to_runMultiQCSample.toSortedList()
-  val rseqc_infer_experiment_files \
+  file rseqc_infer_experiment_files \
     from runRSeQC_infer_experiment_to_runMultiQCSample.toSortedList()
-  val rseqc_inner_distance_files \
+  file rseqc_inner_distance_files \
     from runRSeQC_inner_distance_to_runMultiQCSample.toSortedList()
-  val rseqc_junction_annotation_files \
+  file rseqc_junction_annotation_files \
     from runRSeQC_junction_annotation_to_runMultiQCSample.toSortedList()
-  val rseqc_junction_saturation_files \
+  file rseqc_junction_saturation_files \
     from runRSeQC_junction_saturation_to_runMultiQCSample.toSortedList()
-  val rseqc_read_distribution_files \
+  file rseqc_read_distribution_files \
     from runRSeQC_read_distribution_to_runMultiQCSample.toSortedList()
-  val rseqc_read_duplication_files \
+  file rseqc_read_duplication_files \
     from runRSeQC_read_duplication_to_runMultiQCSample.toSortedList()
-  val rseqc_read_GC_files \
+  file rseqc_read_GC_files \
     from runRSeQC_read_GC_to_runMultiQCSample.toSortedList()
-  val star_files \
+  file star_files \
     from runSTAR2pass_to_runMultiQCSample.toSortedList()
 
   output:
@@ -563,28 +553,34 @@ process runMultiQCSample {
   file("sample_multiqc_data/multiqc_star.txt") \
     into runMultiQCSample_star_to_createSE
 
+    print("VAL FILE")
+    print(runSTAR2pass_to_runMultiQCSample)
   script:
   """
-  module list
-
+  # needed for multiqc
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
   # Create temporary MultiQC input file
-  multiqc_input_tempfile=\$(mktemp)
-  for filename in \
-    '${rseqc_bam_stat_files.join("' '")}' \
-    '${rseqc_geneBody_coverage_files.join("' '")}' \
-    '${rseqc_infer_experiment_files.join("' '")}' \
-    '${rseqc_inner_distance_files.join("' '")}' \
-    '${rseqc_junction_annotation_files.join("' '")}' \
-    '${rseqc_junction_saturation_files.join("' '")}' \
-    '${rseqc_read_distribution_files.join("' '")}' \
-    '${rseqc_read_duplication_files.join("' '")}' \
-    '${rseqc_read_GC_files.join("' '")}' \
-    '${star_files.join("' '")}'
-  do
-    echo "\$filename" >> \$multiqc_input_tempfile
-  done
+  # multiqc_input_tempfile=\$(mktemp)
+  # for filename in \
+  #  '${rseqc_bam_stat_files.join("' '")}' \
+  #  '${rseqc_geneBody_coverage_files.join("' '")}' \
+  # '${rseqc_infer_experiment_files.join("' '")}' \
+  #  '${rseqc_inner_distance_files.join("' '")}' \
+  #  '${rseqc_junction_annotation_files.join("' '")}' \
+  #  '${rseqc_junction_saturation_files.join("' '")}' \
+  #  '${rseqc_read_distribution_files.join("' '")}' \
+  #  '${rseqc_read_duplication_files.join("' '")}' \
+  #  '${rseqc_read_GC_files.join("' '")}' \
+  #  '${star_files.join("' '")}'
+  #do
+  #  echo "\$filename" >> \$multiqc_input_tempfile
+  #done
   # Run MultiQC
-  multiqc -n sample_multiqc --file-list \$multiqc_input_tempfile
+  multiqc -n sample_multiqc ${rseqc_bam_stat_files}  ${rseqc_geneBody_coverage_files} \
+  ${rseqc_infer_experiment_files} ${rseqc_inner_distance_files} ${rseqc_junction_annotation_files} \
+    ${rseqc_junction_saturation_files} ${rseqc_read_distribution_files} \
+     ${rseqc_read_duplication_files} ${rseqc_read_GC_files} ${star_files} 
   """
 }
 
@@ -594,17 +590,17 @@ process createSE {
   tag "Combining results into SummarizedExperiment objects"
   publishDir "${params.output_dir}/Output/Expression"
 
-  module params.modules.R
+  //module params.modules.R
 
   input:
   // Method toSortedList() used to ensure task will be cached, not resubmitted
-  val multiqcfastqc_file from runMultiQCFastq_to_createSE
-  val rseqc_tin_files from rseqc_tin_to_createSE.toSortedList()
-  val multiqc_rseqc_files \
+  file multiqcfastqc_file from runMultiQCFastq_to_createSE
+  file rseqc_tin_files from rseqc_tin_to_createSE.toSortedList()
+  file multiqc_rseqc_files \
     from runMultiQCSample_rseqc_to_createSE.flatten().toSortedList()
-  val multiqc_star_file from runMultiQCSample_star_to_createSE
-  val rsem_genes_files from runRSEM_genes_to_createSE.toSortedList()
-  val rsem_isoforms_files from runRSEM_isoforms_to_createSE.toSortedList()
+  file multiqc_star_file from runMultiQCSample_star_to_createSE
+  file rsem_genes_files from runRSEM_genes_to_createSE.toSortedList()
+  file rsem_isoforms_files from runRSEM_isoforms_to_createSE.toSortedList()
 
   output:
   file("*.rds") into runCreateSEOutput
@@ -637,7 +633,7 @@ process createSE {
   # Parse input file ###########################################################
 
   output[["inputfile"]] <- read.delim(
-    "${params.infile}", stringsAsFactors=FALSE
+    "${params.infile_container}", stringsAsFactors=FALSE
   )
   n.samples <- nrow(output[["inputfile"]])
   # Aggregate by individual ID, sample ID, library ID
